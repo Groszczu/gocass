@@ -1,0 +1,9 @@
+services:
+  cassandra:
+    container_name: cassandra
+    image: cassandra:4.1
+    environment:
+      - "MAX_HEAP_SIZE=256M"
+      - "HEAP_NEWSIZE=128M"
+    restart: always
+

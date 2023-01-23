@@ -1,0 +1,58 @@
+version: "3.8"
+services:
+  cassandra-0:
+    extends:
+      file: ./tools/docker/common-services.yml
+      service: cassandra
+    container_name: cassandra-0
+    ports:
+      - "9042:9042"
+    volumes:
+      - ./cassandra_data/node0:/var/lib/cassandra
+
+  cassandra-1:
+    extends:
+      file: ./tools/docker/common-services.yml
+      service: cassandra
+    container_name: cassandra-1
+    ports:
+      - "9043:9042"
+    depends_on:
+      - "cassandra-0"
+    environment:
+      - "CASSANDRA_SEEDS=cassandra-0,cassandra-2"
+    restart: always
+    volumes:
+      - ./cassandra_data/node1:/var/lib/cassandra
+
+  cassandra-2:
+    extends:
+      file: ./tools/docker/common-services.yml
+      service: cassandra
+    container_name: cassandra-2
+    ports:
+      - "9044:9042"
+    depends_on:
+      - "cassandra-0"
+    environment:
+      - "CASSANDRA_SEEDS=cassandra-0,cassandra-1"
+    volumes:
+      - ./cassandra_data/node2:/var/lib/cassandra
+
+  cassandra-schema-loader:
+    container_name: cassandra-schema-loader
+    image: cassandra:4.1
+    depends_on:
+      - "cassandra-0"
+      - "cassandra-1"
+      - "cassandra-2"
+    volumes:
+      - ./tools/cassandra/schema.cql:/schema.cql
+    command: /bin/bash -c "sleep 60 && echo loading cassandra schema && cqlsh cassandra-0 -f /schema.cql"
+    deploy:
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+
