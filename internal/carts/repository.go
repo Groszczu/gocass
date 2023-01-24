@@ -3,6 +3,7 @@ package carts
 import (
 	"github.com/Groszczu/gocass/internal/models"
 	"github.com/Groszczu/gocass/internal/repository"
+	"github.com/gocql/gocql"
 	"github.com/scylladb/gocqlx/v2"
 	"github.com/scylladb/gocqlx/v2/qb"
 )
@@ -24,7 +25,20 @@ func newCartRepository(session *gocqlx.Session) CartRepository {
 }
 
 func newDiscountCodeRepository(session *gocqlx.Session) DiscountCodeRepository {
-	return repository.New[models.DiscountCodesStruct](session, models.DiscountCodes)
+	return discountCodeRepositoryImpl{
+		repository.New[models.DiscountCodesStruct](session, models.DiscountCodes),
+	}
+}
+
+type discountCodeRepositoryImpl struct {
+	repository.Repository[models.DiscountCodesStruct]
+}
+
+func (r discountCodeRepositoryImpl) GetOne(model *models.DiscountCodesStruct) error {
+	q := r.Repository.Query("Get", func() (stmt string, names []string) { return r.TableDefinition().Get() })
+	q.BindStruct(*model).Consistency(gocql.Quorum)
+
+	return q.Get(model)
 }
 
 type discountCodeUsageRepositoryImpl struct {
@@ -45,7 +59,7 @@ func (r discountCodeUsageRepositoryImpl) IncreaseCodeUsageCount(codeUsage *model
 	query := builder.Query(*session).BindMap(qb.M{
 		"usage_count": amount,
 		"code":        codeUsage.Code,
-	})
+	}).Consistency(gocql.Quorum)
 
 	return query.Exec()
 }

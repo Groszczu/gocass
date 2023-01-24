@@ -125,10 +125,12 @@ func (s Service) PlaceOrder(cart *models.CartsStruct) (*models.OrdersStruct, err
 			return nil, errors.New("discount code usage exceeded")
 		} else {
 			s.discountCodeUsageRepo.IncreaseCodeUsageCount(&discountCodeUsage, 1)
+			cart.DiscountPercent = discountCode.DiscountPercent
+			cart.DiscountCode = discountCode.Code
 		}
 	}
 
-	totalPrice = applyDiscount(totalPrice, int(discountCode.DiscountPercent))
+	totalPrice = applyDiscount(totalPrice, int(cart.DiscountPercent))
 	order := models.OrdersStruct{
 		CartId:            cart.CartId,
 		TotalPriceInCents: int32(totalPrice),

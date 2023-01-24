@@ -12,6 +12,7 @@ type Repository[T any] interface {
 	Delete(model *T) error
 	Session() *gocqlx.Session
 	TableDefinition() *table.Table
+	Query(queryKey string, getter statementGetter) *gocqlx.Queryx
 }
 
 type statementGetter = func() (stmt string, names []string)
@@ -74,6 +75,10 @@ func (r CassandraRepository[T]) Session() *gocqlx.Session {
 
 func (r CassandraRepository[T]) TableDefinition() *table.Table {
 	return r.table
+}
+
+func (r CassandraRepository[T]) Query(queryKey string, getter statementGetter) *gocqlx.Queryx {
+	return r.lazyGetQuery(queryKey, getter)
 }
 
 func toStatementGetter(fn func(...string) (string, []string)) statementGetter {
