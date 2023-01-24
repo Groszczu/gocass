@@ -1,6 +1,7 @@
 package carts
 
 import (
+	"errors"
 	"math"
 
 	"github.com/Groszczu/gocass/internal/models"
@@ -8,10 +9,11 @@ import (
 )
 
 type Service struct {
-	cartRepo         CartRepository
-	cartProductRepo  CartProductRepository
-	discountCodeRepo DiscountCodeRepository
-	orderRepo        OrderRepository
+	cartRepo              CartRepository
+	cartProductRepo       CartProductRepository
+	discountCodeRepo      DiscountCodeRepository
+	discountCodeUsageRepo DiscountCodeUsageRepository
+	orderRepo             OrderRepository
 }
 
 func NewService(session *gocqlx.Session) Service {
@@ -19,6 +21,7 @@ func NewService(session *gocqlx.Session) Service {
 		newCartRepository(session),
 		newCartProductRepository(session),
 		newDiscountCodeRepository(session),
+		newDiscountCodeUsageRepository(session),
 		newOrderRepository(session),
 	}
 }
@@ -55,7 +58,17 @@ func (s Service) AddDiscountCodeToCart(cart *models.CartsStruct, code string) er
 	if err := s.discountCodeRepo.GetOne(&discountCode); err != nil {
 		return err
 	}
-	// TODO: Check if user already used the code
+	// for _, usedById := range discountCode.UsedBy {
+	// 	if usedById == cart.UserId {
+	// 		return errors.New(fmt.Sprintf("discount code used by user with ID %s", cart.UserId))
+	// 	}
+	// }
+
+	discountCodeUsage := models.DiscountCodeUsagesStruct{Code: discountCode.Code, UsageCount: 0}
+	s.discountCodeUsageRepo.GetOne(&discountCodeUsage)
+	if discountCodeUsage.UsageCount >= int(discountCode.UsageLimit) {
+		return errors.New("discount code usage exceeded")
+	}
 
 	cart.DiscountCode = discountCode.Code
 	cart.DiscountPercent = discountCode.DiscountPercent
@@ -78,8 +91,60 @@ func (s Service) GetCartTotalPrice(cart *models.CartsStruct) (int, error) {
 		return 0, err
 	}
 
-	priceAfterDiscount := float64(totalPrice) * ((100 - float64(cart.DiscountPercent)) / 100)
-	priceRoundedUp := int(math.Ceil(priceAfterDiscount))
+	priceAfterDiscount := applyDiscount(totalPrice, int(cart.DiscountPercent))
 
-	return priceRoundedUp, nil
+	return priceAfterDiscount, nil
+}
+
+func (s Service) PlaceOrder(cart *models.CartsStruct) (*models.OrdersStruct, error) {
+	products, err := s.GetCartProducts(cart)
+	if err != nil {
+		return nil, err
+	}
+	totalPrice := 0
+	productsMap := map[[16]byte]models.OrderProductUserType{}
+	for _, product := range *products {
+		totalPrice += int(product.PriceInCents * product.Quantity)
+		productsMap[product.ProductId] = models.OrderProductUserType{
+			ProductId:    product.ProductId,
+			Name:         product.Name,
+			Description:  product.Description,
+			PriceInCents: product.PriceInCents,
+			Quantity:     product.Quantity,
+		}
+	}
+	discountCode := models.DiscountCodesStruct{Code: cart.DiscountCode, DiscountPercent: 0}
+	if cart.DiscountCode != "" {
+		if err := s.discountCodeRepo.GetOne(&discountCode); err != nil {
+			return nil, err
+		}
+		// for _, usedById := range discountCode.UsedBy {
+		// 	if usedById == cart.UserId {
+		// 		return nil, errors.New(fmt.Sprintf("discount code used by user with ID %s", cart.UserId))
+		// 	}
+		// }
+		discountCodeUsage := models.DiscountCodeUsagesStruct{Code: discountCode.Code, UsageCount: 0}
+		s.discountCodeUsageRepo.GetOne(&discountCodeUsage)
+		if discountCodeUsage.UsageCount >= int(discountCode.UsageLimit) {
+			return nil, errors.New("discount code usage exceeded")
+		} else {
+			s.discountCodeUsageRepo.IncreaseCodeUsageCount(&discountCodeUsage, 1)
+		}
+	}
+
+	totalPrice = applyDiscount(totalPrice, int(discountCode.DiscountPercent))
+	order := models.OrdersStruct{
+		CartId:            cart.CartId,
+		TotalPriceInCents: int32(totalPrice),
+		Status:            "pending",
+		Products:          productsMap,
+	}
+
+	err = s.orderRepo.Insert(&order)
+	return &order, err
+}
+
+func applyDiscount(totalPriceInCents int, discountPercent int) int {
+	priceAfterDiscount := float64(totalPriceInCents) * ((100 - float64(discountPercent)) / 100)
+	return int(math.Ceil(priceAfterDiscount))
 }

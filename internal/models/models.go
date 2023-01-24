@@ -3,6 +3,10 @@
 package models
 
 import (
+	"reflect"
+
+	"github.com/gocql/gocql"
+	"github.com/scylladb/gocqlx/v2"
 	"github.com/scylladb/gocqlx/v2/table"
 )
 
@@ -108,6 +112,16 @@ type OrderProductUserType struct {
 	Description  string
 	PriceInCents int32
 	Quantity     int32
+}
+
+func (op OrderProductUserType) MarshalUDT(name string, info gocql.TypeInfo) ([]byte, error) {
+	f := gocqlx.DefaultMapper.FieldByName(reflect.ValueOf(op), name)
+	return gocql.Marshal(info, f.Interface())
+}
+
+func (op OrderProductUserType) UnmarshalUDT(name string, info gocql.TypeInfo, data []byte) error {
+	f := gocqlx.DefaultMapper.FieldByName(reflect.ValueOf(op), name)
+	return gocql.Unmarshal(info, data, f.Addr().Interface())
 }
 
 type CartProductsStruct struct {

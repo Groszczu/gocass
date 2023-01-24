@@ -13,6 +13,10 @@ type CartProductRepository interface {
 	SumProductPrices(cartId models.UUID) (int, error)
 }
 type DiscountCodeRepository = repository.Repository[models.DiscountCodesStruct]
+type DiscountCodeUsageRepository interface {
+	repository.Repository[models.DiscountCodeUsagesStruct]
+	IncreaseCodeUsageCount(codeUsage *models.DiscountCodeUsagesStruct, amount int) error
+}
 type OrderRepository = repository.Repository[models.OrdersStruct]
 
 func newCartRepository(session *gocqlx.Session) CartRepository {
@@ -21,6 +25,29 @@ func newCartRepository(session *gocqlx.Session) CartRepository {
 
 func newDiscountCodeRepository(session *gocqlx.Session) DiscountCodeRepository {
 	return repository.New[models.DiscountCodesStruct](session, models.DiscountCodes)
+}
+
+type discountCodeUsageRepositoryImpl struct {
+	repository.Repository[models.DiscountCodeUsagesStruct]
+}
+
+func newDiscountCodeUsageRepository(session *gocqlx.Session) DiscountCodeUsageRepository {
+	return discountCodeUsageRepositoryImpl{
+		repository.New[models.DiscountCodeUsagesStruct](session, models.DiscountCodeUsages),
+	}
+}
+
+func (r discountCodeUsageRepositoryImpl) IncreaseCodeUsageCount(codeUsage *models.DiscountCodeUsagesStruct, amount int) error {
+	session := r.Session()
+	table := r.TableDefinition()
+
+	builder := table.UpdateBuilder().Add("usage_count")
+	query := builder.Query(*session).BindMap(qb.M{
+		"usage_count": amount,
+		"code":        codeUsage.Code,
+	})
+
+	return query.Exec()
 }
 
 func newOrderRepository(session *gocqlx.Session) OrderRepository {

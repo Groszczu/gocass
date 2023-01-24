@@ -57,6 +57,9 @@ CREATE TABLE orders (
     status text
 );
 
+INSERT INTO users(id, name)
+    VALUES (c372e753-2624-430a-95c7-f2e84e0415cb, 'user');
+
 INSERT INTO discount_codes(code, discount_percent, usage_limit, used_by)
     VALUES ('abc', 10, 250, {});
 

@@ -1,22 +1,31 @@
 package main
 
 import (
+	"flag"
+	"fmt"
 	"log"
+	"math/rand"
 	"os"
+	"time"
 
 	"github.com/Groszczu/gocass/internal/backend"
 	"github.com/Groszczu/gocass/internal/carts"
 	"github.com/Groszczu/gocass/internal/models"
 	"github.com/Groszczu/gocass/internal/users"
+	"github.com/gocql/gocql"
 )
 
 var (
-	dbHost = "127.0.0.1"
-	dbPort = "9042"
-	logger *log.Logger
+	dbHost  = "127.0.0.1"
+	dbPort  = "9042"
+	logger  *log.Logger
+	workers = flag.Int("workers", 3, "number of workers to use")
+	runs = flag.Int("runs", 100, "number of runs per worker")
 )
 
 func init() {
+	flag.Parse()
+
 	logger = log.New(os.Stdout, "gocass: ", log.Lmicroseconds)
 
 	if dbHostEnv, ok := os.LookupEnv("DATABASE_HOST"); ok {
@@ -32,81 +41,169 @@ func init() {
 	} else {
 		logger.Println("Using default database port value")
 	}
+
+	logger.Printf("Number of workers: %d\n", *workers)
+	logger.Printf("Number of runs: %d\n", *runs)
 }
 
 func main() {
+	work := make(chan map[string]int)
+
+	for workerId := 0; workerId < *workers; workerId++ {
+		go runWorker(work, workerId, *runs)
+	}
+
+	codesUsage := map[string]int{}
+	for _, code := range discountCodes {
+		codesUsage[code] = 0
+	}
+
+	for workerId := 0; workerId < *workers; workerId++ {
+		workerCodesUsage := <- work
+		for code, usage := range workerCodesUsage {
+			codesUsage[code] += usage
+		}
+	}
+
+	logger.Printf("Code usage: %+v\n", codesUsage)
+}
+
+func parseUUID(input string) gocql.UUID {
+	uuid, err := gocql.ParseUUID(input)
+	if err != nil {
+		panic("Invalid UUID")
+	}
+	return uuid
+}
+
+func randomInt(min int, max int) int {
+	return rand.Intn(max-min+1) + min
+}
+func randomQuantity() int32 {
+	return int32(randomInt(1, 5))
+}
+
+func randomSleep() {
+	time.Sleep(time.Duration(randomInt(20, 100)) * time.Millisecond)
+}
+
+var products = []models.CartProductsStruct{
+	{
+		ProductId:    parseUUID("c1433f31-ea57-4f16-9555-dc616169a6d2"),
+		Name:         "Cassandra guidebook",
+		Description:  "Learn how to use Cassandra",
+		Quantity:     1,
+		PriceInCents: 40 * 100,
+	},
+	{
+		ProductId:    parseUUID("64efbc98-63e1-404d-9789-5ccb307c7d7e"),
+		Name:         "Gaming keyboard",
+		Description:  "Best keyboard",
+		Quantity:     1,
+		PriceInCents: 120 * 100,
+	},
+	{
+		ProductId:    parseUUID("d5b384d9-cf7f-4383-b59e-0558fa6b79c1"),
+		Name:         "Smartphone",
+		Description:  "Best smartphone",
+		Quantity:     1,
+		PriceInCents: 300 * 100,
+	},
+	{
+		ProductId:    parseUUID("89c7b039-1481-4ef8-b5ad-83c227b83540"),
+		Name:         "Headphones",
+		Description:  "Best headphones",
+		Quantity:     1,
+		PriceInCents: 50 * 100,
+	},
+}
+
+var discountCodes = []string{
+	"abc",
+	"def",
+}
+
+var user = models.UsersStruct{
+	Id:   parseUUID("c372e753-2624-430a-95c7-f2e84e0415cb"),
+	Name: "user",
+}
+
+func runWorker(work chan map[string]int, workerId int, runs int) {
+	workerLogger := log.New(os.Stdout, fmt.Sprintf("worker-%d: ", workerId), log.Lmicroseconds)
 
 	session, err := backend.Session(dbHost + ":" + dbPort)
 
 	if err != nil {
-		logger.Fatalln("Failed to create backend session ", err)
+		workerLogger.Fatalln("Failed to create backend session ", err)
 	}
 
 	defer func() {
-		logger.Println("Closing backend session")
+		workerLogger.Println("Closing backend session")
 		session.Close()
-		logger.Println("Backend session closed")
+		workerLogger.Println("Backend session closed")
 	}()
 
-	logger.Printf("Created backed session on %s:%s", dbHost, dbPort)
+	workerLogger.Printf("Created backed session on %s:%s", dbHost, dbPort)
+
+	codesUsage := map[string]int{}
+	for _, code := range discountCodes {
+		codesUsage[code] = 0
+	}
 
 	usersService := users.NewService(&session)
 	cartsService := carts.NewService(&session)
 
-	user := models.UsersStruct{Name: "roch"}
-	if err := usersService.GetUser(&user); err != nil {
-		if err := usersService.RegisterUser(&user); err != nil {
-			logger.Fatalln("Failed to create a new user")
+	for runId := 0; runId < runs; runId++ {
+		if err := usersService.GetUser(&user); err != nil {
+			workerLogger.Printf("No user with name '%s' found, registering new user.", user.Name)
+			if err := usersService.RegisterUser(&user); err != nil {
+				workerLogger.Fatalln("Failed to create a new user")
+			}
 		}
-	}
 
-	cart := models.CartsStruct{UserId: user.Id}
-	if err := cartsService.GetCart(&cart); err != nil {
-		newCart, err := cartsService.CreateCartForUser(user.Id)
+		cart := models.CartsStruct{UserId: user.Id}
+		if err := cartsService.GetCart(&cart); err != nil {
+			workerLogger.Println("No single cart found, creating new cart")
+			newCart, err := cartsService.CreateCartForUser(user.Id)
+			if err != nil {
+				workerLogger.Fatalln("Failed to create a cart for user:", err)
+			}
+			workerLogger.Println("New cart created")
+			cart = *newCart
+		}
+
+		numberOfProductsToAdd := randomInt(1, len(products))
+		addedProducts := []models.CartProductsStruct{}
+		addedProductsPrice := 0
+		for i := 0; i < numberOfProductsToAdd; i++ {
+			product := products[randomInt(0, len(products)-1)]
+			product.Quantity = randomQuantity()
+			addedProducts = append(addedProducts, product)
+			addedProductsPrice += int(product.PriceInCents * product.Quantity)
+			cartsService.AddToCart(&cart, &product)
+			randomSleep()
+		}
+
+		workerLogger.Printf("Added products worth: %d\n", addedProductsPrice)
+
+		discountCodeIndex := randomInt(0, len(discountCodes))
+		if discountCodeIndex != len(discountCodes) {
+			discountCode := discountCodes[discountCodeIndex]
+			if err := cartsService.AddDiscountCodeToCart(&cart, discountCode); err != nil {
+				workerLogger.Printf("Failed to add discount code '%s' to a cart: %s\n", discountCode, err)
+			} else {
+				workerLogger.Printf("Added discount code '%s' to cart\n", discountCode)
+				codesUsage[discountCode] += 1
+			}
+		}
+
+		order, err := cartsService.PlaceOrder(&cart)
 		if err != nil {
-			logger.Fatalln("Failed to create a cart for user:", err)
+			workerLogger.Println("Failed to place order:", err)
 		}
-		cart = *newCart
+		workerLogger.Printf("Placed order for: %d\n", order.TotalPriceInCents)
 	}
 
-	logger.Printf("Got cart: %+v\n", cart)
-
-	products := []models.CartProductsStruct{
-		{
-			Name:         "Cassandra guidebook",
-			Description:  "Learn how to use Cassandra",
-			Quantity:     3,
-			PriceInCents: 40 * 100,
-		},
-		{
-			Name:         "Gaming keyboard",
-			Description:  "Best keyboard",
-			Quantity:     2,
-			PriceInCents: 120 * 100,
-		},
-	}
-
-	for _, product := range products {
-		product.CartId = cart.CartId
-		product.ProductId = models.RandomUUID()
-		cartsService.AddToCart(&cart, &product)
-	}
-
-	totalPrice, err := cartsService.GetCartTotalPrice(&cart)
-	if err != nil {
-		logger.Fatalln("Failed to get a total price of a cart:", err)
-	}
-
-	logger.Printf("Total cart price: %d\n", totalPrice)
-
-	if err := cartsService.AddDiscountCodeToCart(&cart, "abc"); err != nil {
-		logger.Fatalln("Failed to add discount code to a cart:", err)
-	}
-
-	totalPrice, err = cartsService.GetCartTotalPrice(&cart)
-	if err != nil {
-		logger.Fatalln("Failed to get a total price of a cart:", err)
-	}
-
-	logger.Printf("Total cart price: %d\n", totalPrice)
+	workerLogger.Printf("Codes used: %+v\n", codesUsage)
+	work <- codesUsage
 }
