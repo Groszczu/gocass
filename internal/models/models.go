@@ -64,7 +64,6 @@ var (
 			"code",
 			"discount_percent",
 			"usage_limit",
-			"used_by",
 		},
 		PartKey: []string{
 			"code",
@@ -146,7 +145,6 @@ type DiscountCodesStruct struct {
 	Code            string
 	DiscountPercent int32
 	UsageLimit      int32
-	UsedBy          [][16]byte
 }
 type UsersStruct struct {
 	Id   [16]byte

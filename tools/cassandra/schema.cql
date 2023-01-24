@@ -34,7 +34,6 @@ CREATE TABLE discount_codes (
     code text PRIMARY KEY,
     discount_percent int,
     usage_limit int,
-    used_by set<uuid>
 );
 
 CREATE TABLE discount_code_usages (
@@ -60,9 +59,9 @@ CREATE TABLE orders (
 INSERT INTO users(id, name)
     VALUES (c372e753-2624-430a-95c7-f2e84e0415cb, 'user');
 
-INSERT INTO discount_codes(code, discount_percent, usage_limit, used_by)
-    VALUES ('abc', 10, 250, {});
+INSERT INTO discount_codes(code, discount_percent, usage_limit)
+    VALUES ('abc', 10, 250);
 
-INSERT INTO discount_codes(code, discount_percent, usage_limit, used_by)
-    VALUES ('def', 15, 100, {});
+INSERT INTO discount_codes(code, discount_percent, usage_limit)
+    VALUES ('def', 15, 100);
 

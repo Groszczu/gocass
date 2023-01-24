@@ -6,6 +6,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Groszczu/gocass/internal/backend"
@@ -16,11 +17,10 @@ import (
 )
 
 var (
-	dbHost  = "127.0.0.1"
-	dbPort  = "9042"
 	logger  *log.Logger
+	dbHosts = flag.String("hosts", "127.0.0.1:9042,127.0.0.1:9043,127.0.0.1:9044", "comma-separated hosts addresses")
 	workers = flag.Int("workers", 3, "number of workers to use")
-	runs = flag.Int("runs", 100, "number of runs per worker")
+	runs    = flag.Int("runs", 100, "number of runs per worker")
 )
 
 func init() {
@@ -28,20 +28,7 @@ func init() {
 
 	logger = log.New(os.Stdout, "gocass: ", log.Lmicroseconds)
 
-	if dbHostEnv, ok := os.LookupEnv("DATABASE_HOST"); ok {
-		logger.Println("Loaded DATABASE_HOST environment variable")
-		dbHost = dbHostEnv
-	} else {
-		logger.Println("Using default database host value")
-	}
-
-	if dbPortEnv, ok := os.LookupEnv("DATABASE_PORT"); ok {
-		logger.Println("Loaded DATABASE_PORT environment variable")
-		dbPort = dbPortEnv
-	} else {
-		logger.Println("Using default database port value")
-	}
-
+	logger.Printf("Cassandra database hosts: %s\n", *dbHosts)
 	logger.Printf("Number of workers: %d\n", *workers)
 	logger.Printf("Number of runs: %d\n", *runs)
 }
@@ -59,7 +46,7 @@ func main() {
 	}
 
 	for workerId := 0; workerId < *workers; workerId++ {
-		workerCodesUsage := <- work
+		workerCodesUsage := <-work
 		for code, usage := range workerCodesUsage {
 			codesUsage[code] += usage
 		}
@@ -131,7 +118,7 @@ var user = models.UsersStruct{
 func runWorker(work chan map[string]int, workerId int, runs int) {
 	workerLogger := log.New(os.Stdout, fmt.Sprintf("worker-%d: ", workerId), log.Lmicroseconds)
 
-	session, err := backend.Session(dbHost + ":" + dbPort)
+	session, err := backend.Session(strings.Split(*dbHosts, ",")...)
 
 	if err != nil {
 		workerLogger.Fatalln("Failed to create backend session ", err)
@@ -143,7 +130,7 @@ func runWorker(work chan map[string]int, workerId int, runs int) {
 		workerLogger.Println("Backend session closed")
 	}()
 
-	workerLogger.Printf("Created backed session on %s:%s", dbHost, dbPort)
+	workerLogger.Printf("Created backend session on %s", *dbHosts)
 
 	codesUsage := map[string]int{}
 	for _, code := range discountCodes {
@@ -157,7 +144,8 @@ func runWorker(work chan map[string]int, workerId int, runs int) {
 		if err := usersService.GetUser(&user); err != nil {
 			workerLogger.Printf("No user with name '%s' found, registering new user.", user.Name)
 			if err := usersService.RegisterUser(&user); err != nil {
-				workerLogger.Fatalln("Failed to create a new user")
+				workerLogger.Println("Failed to create a new user:", err)
+				continue
 			}
 		}
 
@@ -166,7 +154,8 @@ func runWorker(work chan map[string]int, workerId int, runs int) {
 			workerLogger.Println("No single cart found, creating new cart")
 			newCart, err := cartsService.CreateCartForUser(user.Id)
 			if err != nil {
-				workerLogger.Fatalln("Failed to create a cart for user:", err)
+				workerLogger.Println("Failed to create a cart for user:", err)
+				continue
 			}
 			workerLogger.Println("New cart created")
 			cart = *newCart
@@ -200,8 +189,19 @@ func runWorker(work chan map[string]int, workerId int, runs int) {
 		order, err := cartsService.PlaceOrder(&cart)
 		if err != nil {
 			workerLogger.Println("Failed to place order:", err)
+			if err := cartsService.RemoveDiscountCodeFromCart(&cart); err != nil {
+				workerLogger.Println("Failed to remove disount code from cart:", err)
+			} else {
+				order, err := cartsService.PlaceOrder(&cart)
+				if err != nil {
+					workerLogger.Println("Failed to place order:", err)
+				} else {
+					workerLogger.Printf("Placed order for: %d\n", order.TotalPriceInCents)
+				}
+			}
+		} else {
+			workerLogger.Printf("Placed order for: %d\n", order.TotalPriceInCents)
 		}
-		workerLogger.Printf("Placed order for: %d\n", order.TotalPriceInCents)
 	}
 
 	workerLogger.Printf("Codes used: %+v\n", codesUsage)

@@ -58,11 +58,6 @@ func (s Service) AddDiscountCodeToCart(cart *models.CartsStruct, code string) er
 	if err := s.discountCodeRepo.GetOne(&discountCode); err != nil {
 		return err
 	}
-	// for _, usedById := range discountCode.UsedBy {
-	// 	if usedById == cart.UserId {
-	// 		return errors.New(fmt.Sprintf("discount code used by user with ID %s", cart.UserId))
-	// 	}
-	// }
 
 	discountCodeUsage := models.DiscountCodeUsagesStruct{Code: discountCode.Code, UsageCount: 0}
 	s.discountCodeUsageRepo.GetOne(&discountCodeUsage)
@@ -73,6 +68,12 @@ func (s Service) AddDiscountCodeToCart(cart *models.CartsStruct, code string) er
 	cart.DiscountCode = discountCode.Code
 	cart.DiscountPercent = discountCode.DiscountPercent
 
+	return s.cartRepo.Insert(cart)
+}
+
+func (s Service) RemoveDiscountCodeFromCart(cart *models.CartsStruct) error {
+	cart.DiscountCode = ""
+	cart.DiscountPercent = 0
 	return s.cartRepo.Insert(cart)
 }
 
@@ -118,11 +119,6 @@ func (s Service) PlaceOrder(cart *models.CartsStruct) (*models.OrdersStruct, err
 		if err := s.discountCodeRepo.GetOne(&discountCode); err != nil {
 			return nil, err
 		}
-		// for _, usedById := range discountCode.UsedBy {
-		// 	if usedById == cart.UserId {
-		// 		return nil, errors.New(fmt.Sprintf("discount code used by user with ID %s", cart.UserId))
-		// 	}
-		// }
 		discountCodeUsage := models.DiscountCodeUsagesStruct{Code: discountCode.Code, UsageCount: 0}
 		s.discountCodeUsageRepo.GetOne(&discountCodeUsage)
 		if discountCodeUsage.UsageCount >= int(discountCode.UsageLimit) {
